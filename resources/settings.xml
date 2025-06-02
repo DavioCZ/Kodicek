@@ -1,0 +1,6 @@
+<settings>
+    <category label="Přihlášení k Webshare">
+        <setting id="ws_username" type="text" label="Uživatelské jméno (e-mail)" default="" />
+        <setting id="ws_password" type="text" option="hidden" label="Heslo" default="" />
+    </category>
+</settings>
