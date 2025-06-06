@@ -3,17 +3,33 @@
        name="Kodíček"
        version="1.0.0"
        provider-name="TvojeJméno">
+
     <requires>
         <import addon="xbmc.python" version="3.0.0"/>
+        <!-- Pokud používáš requests/unidecode, odkomentuj další řádky -->
+        <import addon="script.module.requests" version="2.18.4"/> 
+        <import addon="script.module.unidecode" version="0.4.16"/>
     </requires>
-    <extension point="xbmc.python.plugin" library="kodicek.py">
+
+    <extension point="xbmc.python.pluginsource" library="kodicek.py">
         <provides>video</provides>
     </extension>
-    <extension point="xbmc.addon.metadata">
+
+    <extension point="xbmc.addon.metadata" icon="icon.png">
         <summary lang="cs">Jednoduchý vyhledávač a přehrávač filmů z Webshare pro Kodi.</summary>
-        <description lang="cs">Po spuštění Kodíčku jednoduše vyhledáš film a jedním kliknutím ho přehraješ – nic víc, nic míň.</description>
+        <disclaimer lang="cs">Plugin neposkytuje žádný obsah, je to jen simulace prohlížeče veřejně dostupné web stránky. Nejsem zodpovědný za obsah, který tato stránka poskytuje.</disclaimer>
         <platform>all</platform>
-        <icon>icon.png</icon>
-        <fanart>fanart.jpg</fanart>
+        <license>AGPL 3.0</license>
+        <!-- Zde můžeš uvést odkaz na fórum nebo repo -->
+        <!-- <forum>https://www.xbmc-kodi.cz/prispevek-kodicek</forum> -->
+        <!-- <source>https://github.com/DavioCZ/Kodicek</source> -->
+        <assets>
+            <icon>icon.png</icon>
+            <fanart>fanart.jpg</fanart>
+        </assets>
+        <news>
+            [B]1.0.0[/B] - První verze Kodíčku: jednoduché vyhledávání a přehrávání z Webshare.
+        </news>
     </extension>
+
 </addon>

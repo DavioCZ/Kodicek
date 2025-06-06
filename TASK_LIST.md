@@ -1,7 +1,7 @@
 # Kodíček – TASK LIST PRO VÝVOJ
 
 ## 0. Příprava a plánování
-- [ ] **Vytvořit repozitář** pro projekt (GitHub/GitLab/Bitbucket)
+- [x] **Vytvořit repozitář** pro projekt ([GitHub/GitLab/Bitbucket](https://github.com/DavioCZ/Kodicek))
 - [x] Přidat README.md se specifikací
 - [x] Vytvořit základní složkovou strukturu pro Kodi plugin (`plugin.video.kodicek`)
 - [x] Založit `CHANGELOG.md` pro sledování vývoje
@@ -13,25 +13,25 @@
 - [x] Vytvořit základní `addon.xml` (název, id, metadata)
 - [x] Přidat prázdný hlavní skript `default.py`
 - [x] Připravit `resources/settings.xml` s nastavením pro Webshare login/heslo (čeština)
-- [ ] Otestovat instalaci pluginu do Kodi („Doplňky > Instalovat ze ZIP“)
-- [ ] Otestovat zobrazení pluginu v menu Kodi
+- [x] Otestovat instalaci pluginu do Kodi („Doplňky > Instalovat ze ZIP“)
+- [x] Otestovat zobrazení pluginu v menu Kodi
 
 ---
 
 ## 2. Přihlášení a komunikace s Webshare
-- [ ] Implementovat načítání login/hesla z Kodi settings
-- [ ] Naprogramovat login funkci (přihlášení na Webshare API, získání tokenu)
+- [x] Implementovat načítání login/hesla z Kodi settings
+- [x] Naprogramovat login funkci (přihlášení na Webshare API, získání tokenu)
 - [ ] Otestovat přihlášení (správné i špatné údaje → ověřit chybové hlášky)
 - [ ] Zajistit bezpečné zacházení s citlivými údaji
 
 ---
 
 ## 3. První verze vyhledávání filmů/seriálů
-- [ ] Vytvořit jednoduché vyhledávací pole (dialog v češtině)
-- [ ] Implementovat vyhledávání přes Webshare API
-- [ ] Výpis základních výsledků (název souboru, velikost, typ)
+- [x] Vytvořit jednoduché vyhledávací pole (dialog v češtině)
+- [x] Implementovat vyhledávání přes Webshare API
+- [x] Výpis základních výsledků (název souboru, velikost, typ)
 - [ ] Otestovat různé vyhledávací dotazy (správně/špatně/bez výsledků)
-- [ ] Přidat přehrávání vybraného výsledku v Kodi
+- [x] Přidat přehrávání vybraného výsledku v Kodi
 - [ ] Otestovat přehrávání různých typů souborů
 
 ---
