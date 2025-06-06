@@ -8,7 +8,9 @@ import xbmcgui
 import xbmcaddon
 import requests
 import hashlib
+import time # Added for history timestamp
 from xml.etree import ElementTree as ET
+from history import add_to_history, load_history, add_to_search_history, load_search_history # Updated imports
 try:
     from md5crypt import md5crypt # Assuming this is available in Kodi's Python environment
 except ImportError:
@@ -262,56 +264,95 @@ def router(paramstring):
         # The example plugin has a revalidate() function that checks user_data.
         pass
 
-    if action == "initiate_search":
-        xbmc.log(f"Kodíček: Action 'initiate_search' entered.", level=xbmc.LOGINFO)
-        search_query = xbmcgui.Dialog().input(f"{plugin_name} – Vyhledat film/seriál", type=xbmcgui.INPUT_ALPHANUM)
-        if search_query:
-            url = f"{BASE_URL_PLUGIN}?action=search&query={urllib.parse.quote(search_query)}"
-            xbmc.log(f"Kodíček: 'initiate_search' - calling Container.Update with URL: {url}", level=xbmc.LOGINFO)
-            xbmc.executebuiltin(f'Container.Update("{url}")')
-            # This path is done, Container.Update will trigger the 'search' action.
-            # updateListing=False because this path doesn't draw the list.
-            xbmcplugin.endOfDirectory(addon_handle, succeeded=True, updateListing=False) 
-        else:
-            xbmc.log(f"Kodíček: 'initiate_search' - user cancelled input.", level=xbmc.LOGINFO)
-            xbmcplugin.endOfDirectory(addon_handle, succeeded=False) # User cancelled input
-
-    elif action == "search":
+    if action == "search": # Changed from elif to if, and new logic below
         xbmc.log(f"Kodíček: Action 'search' entered. Params: {params}", level=xbmc.LOGINFO)
-        query = params.get("query")
-        if not query:
-            xbmc.log(f"Kodíček: 'search' action - no query found.", level=xbmc.LOGERROR)
-            xbmcgui.Dialog().notification(plugin_name, "Není zadán hledaný výraz.", xbmcgui.NOTIFICATION_ERROR)
-            xbmcplugin.endOfDirectory(addon_handle, succeeded=False)
-            return
         
-        files = search_webshare(token, query)
-        if not files:
-            xbmcgui.Dialog().notification(plugin_name, "Nic nebylo nalezeno.", xbmcgui.NOTIFICATION_INFO)
-            xbmcplugin.endOfDirectory(addon_handle, succeeded=True) # Explicitly end directory
-            return # Stop further execution in this path
+        what_to_search = params.get("what") 
+        ask_for_input = params.get("ask") == "1"
+
+        if ask_for_input:
+            xbmc.log(f"Kodíček: 'search' action with ask=1. Opening input dialog.", level=xbmc.LOGINFO)
+            search_term_from_dialog = xbmcgui.Dialog().input(f"{plugin_name} – Vyhledat film/seriál", type=xbmcgui.INPUT_ALPHANUM)
+            if search_term_from_dialog:
+                what_to_search = search_term_from_dialog
+                xbmc.log(f"Kodíček: User entered query: {what_to_search}", level=xbmc.LOGINFO)
+                # Add to search history
+                search_history_item = {
+                    "query": what_to_search,
+                    "timestamp": int(time.time())
+                }
+                add_to_search_history(search_history_item)
+                xbmc.log(f"Kodíček: Added to SEARCH history: {search_history_item}", level=xbmc.LOGINFO)
+            else:
+                xbmc.log(f"Kodíček: User cancelled search input dialog.", level=xbmc.LOGINFO)
+                what_to_search = None # Ensure it's None to show history menu
+
+        if what_to_search:
+            xbmc.log(f"Kodíček: Performing search for: {what_to_search}", level=xbmc.LOGINFO)
+            files = search_webshare(token, what_to_search)
+            if not files:
+                xbmcgui.Dialog().notification(plugin_name, "Nic nebylo nalezeno.", xbmcgui.NOTIFICATION_INFO)
+                # Display search history/options menu even if no results, allowing new search
+                xbmcplugin.setPluginCategory(addon_handle, f"Vyhledávání (nic pro '{what_to_search}')")
+                li_new_search = xbmcgui.ListItem(label="Nové vyhledávání...")
+                li_new_search.setArt({'icon': 'DefaultAddonsSearch.png'})
+                url_new_search = f"{BASE_URL_PLUGIN}?action=search&ask=1"
+                xbmcplugin.addDirectoryItem(handle=addon_handle, url=url_new_search, listitem=li_new_search, isFolder=True)
+                xbmcplugin.endOfDirectory(addon_handle, succeeded=True)
+
+            else:
+                xbmcplugin.setPluginCategory(addon_handle, f"Výsledky pro: {what_to_search}")
+                xbmcplugin.setContent(addon_handle, 'videos')
+                for file_item in files:
+                    li = xbmcgui.ListItem(label=file_item["name"])
+                    size_bytes = file_item.get("size", 0)
+                    if size_bytes > 1024*1024*1024: # GB
+                        size_str = f"{size_bytes/(1024*1024*1024):.2f} GB"
+                    elif size_bytes > 1024*1024: # MB
+                        size_str = f"{size_bytes/(1024*1024):.2f} MB"
+                    elif size_bytes > 1024: # KB
+                        size_str = f"{size_bytes/1024:.0f} KB"
+                    else:
+                        size_str = f"{size_bytes} B"
+                    
+                    li.setInfo("video", {"title": file_item["name"], "size": size_bytes, "plot": f"Velikost: {size_str}"})
+                    li.setProperty('IsPlayable', 'true')
+                    url = f"{BASE_URL_PLUGIN}?action=play&ident={file_item['ident']}&name={urllib.parse.quote(file_item['name'])}"
+                    xbmcplugin.addDirectoryItem(handle=addon_handle, url=url, listitem=li, isFolder=False)
+                xbmcplugin.endOfDirectory(addon_handle, succeeded=True)
         else:
-            xbmcplugin.setPluginCategory(addon_handle, f"Výsledky pro: {query}")
-            xbmcplugin.setContent(addon_handle, 'videos') # Inform Kodi about the content type
-            for file_item in files: # Renamed to avoid conflict with 'file' module
-                li = xbmcgui.ListItem(label=file_item["name"])
-                # Format size nicely
-                size_bytes = file_item.get("size", 0)
-                if size_bytes > 1024*1024*1024: # GB
-                    size_str = f"{size_bytes/(1024*1024*1024):.2f} GB"
-                elif size_bytes > 1024*1024: # MB
-                    size_str = f"{size_bytes/(1024*1024):.2f} MB"
-                elif size_bytes > 1024: # KB
-                    size_str = f"{size_bytes/1024:.0f} KB"
-                else:
-                    size_str = f"{size_bytes} B"
-                
-                li.setInfo("video", {"title": file_item["name"], "size": size_bytes, "plot": f"Velikost: {size_str}"})
-                li.setProperty('IsPlayable', 'true')
-                # Use BASE_URL_PLUGIN for constructing plugin URLs
-                url = f"{BASE_URL_PLUGIN}?action=play&ident={file_item['ident']}&name={urllib.parse.quote(file_item['name'])}"
-                xbmcplugin.addDirectoryItem(handle=addon_handle, url=url, listitem=li, isFolder=False)
-        xbmcplugin.endOfDirectory(addon_handle)
+            # Display search history and "New Search" option
+            xbmc.log(f"Kodíček: No search term. Displaying search history/options.", level=xbmc.LOGINFO)
+            xbmcplugin.setPluginCategory(addon_handle, "Vyhledávání")
+
+            li_new_search = xbmcgui.ListItem(label="Nové vyhledávání...")
+            li_new_search.setArt({'icon': 'DefaultAddonsSearch.png'})
+            url_new_search = f"{BASE_URL_PLUGIN}?action=search&ask=1"
+            xbmcplugin.addDirectoryItem(handle=addon_handle, url=url_new_search, listitem=li_new_search, isFolder=True)
+
+            search_history_items = load_search_history() # Use new function
+            past_searches_displayed = False
+            if search_history_items:
+                for item in search_history_items: # Already newest first due to insert(0)
+                    query_text = item.get("query")
+                    if query_text:
+                        display_label = f"Hledáno: {query_text}"
+                        try:
+                            timestamp_str = time.strftime('%d.%m.%y %H:%M', time.localtime(item['timestamp'])) # Shorter year
+                            display_label_with_time = f"{display_label} ({timestamp_str})"
+                        except:
+                            display_label_with_time = display_label
+
+                        li = xbmcgui.ListItem(label=display_label_with_time)
+                        url_past_search = f"{BASE_URL_PLUGIN}?action=search&what={urllib.parse.quote(query_text)}"
+                        xbmcplugin.addDirectoryItem(handle=addon_handle, url=url_past_search, listitem=li, isFolder=True)
+                        past_searches_displayed = True
+            
+            if not past_searches_displayed:
+                # Optional: xbmcgui.Dialog().notification(plugin_name, "Historie vyhledávání je prázdná.", xbmcgui.NOTIFICATION_INFO, displaytime=2000)
+                pass
+
+            xbmcplugin.endOfDirectory(addon_handle, succeeded=True)
 
     elif action == "play":
         xbmc.log(f"Kodíček: [PLAY] Action entered. Params: {params}", level=xbmc.LOGINFO)
@@ -376,25 +417,114 @@ def router(paramstring):
         # Pokud máš artwork nebo thumb, můžeš zde nastavit
         # li.setArt({'thumb': 'URL_na_náhled', 'icon': 'URL_na_ikonu'})
 
+        # Add to history
+        history_item = {
+            "ident": ident,
+            "name": file_name_for_playback,
+            "timestamp": int(time.time()),
+            "type": "video",
+        }
+        xbmc.log(f"Kodíček: Calling add_to_history for played item: {file_name_for_playback}", level=xbmc.LOGINFO)
+        add_to_history(history_item)
+        xbmc.log(f"Kodíček: [PLAY] Added to history: {history_item}", level=xbmc.LOGINFO)
+
         xbmcplugin.setResolvedUrl(addon_handle, True, li)
         xbmc.log(f"Kodíček: [PLAY] setResolvedUrl called. Should now play.", level=xbmc.LOGINFO)
+
+    elif action == "history":
+        xbmc.log(f"Kodíček: Action 'history' entered.", level=xbmc.LOGINFO)
+        xbmc.log(f"Kodíček: Calling load_history for history view.", level=xbmc.LOGINFO)
+        history_items = load_history() # This correctly loads playback history
+        if not history_items:
+            xbmc.log(f"Kodíček: Playback history is empty.", level=xbmc.LOGINFO)
+            xbmcgui.Dialog().notification(plugin_name, "Historie přehrávání je prázdná.", xbmcgui.NOTIFICATION_INFO)
+            xbmcplugin.endOfDirectory(addon_handle, succeeded=True)
+            return
+
+        xbmcplugin.setPluginCategory(addon_handle, "Historie přehrávání") # Clarify title
+        xbmcplugin.setContent(addon_handle, 'videos')
+        for item in history_items: # These are playback items
+            # Ensure item is a playback item, not an old search query if history file was mixed
+            if not item.get("ident") or not item.get("name") or item.get("type") != "video":
+                xbmc.log(f"Kodíček: Skipping non-playback item in history: {item}", level=xbmc.LOGINFO)
+                continue
+
+            li = xbmcgui.ListItem(label=item["name"])
+            try:
+                timestamp_str = time.strftime('%d.%m.%Y %H:%M', time.localtime(item['timestamp']))
+            except Exception: 
+                timestamp_str = "Neznámé datum"
+            
+            plot_info = f"Naposledy přehráno: {timestamp_str}"
+            # item.get("type") should always be "video" here now
+            # plot_info += f"\nTyp: {item.get('type', 'video')}" 
+
+            li.setInfo("video", {"title": item["name"], "plot": plot_info})
+            li.setProperty('IsPlayable', 'true')
+            url = f"{BASE_URL_PLUGIN}?action=play&ident={item['ident']}&name={urllib.parse.quote(item['name'])}"
+            xbmcplugin.addDirectoryItem(handle=addon_handle, url=url, listitem=li, isFolder=False)
+        xbmcplugin.endOfDirectory(addon_handle)
+
+    elif action == "show_combined_history":
+        display_combined_history()
 
     else: # No action or unknown action - show main menu
         display_main_menu()
 
 
-def display_main_menu():
-    li = xbmcgui.ListItem(label="Vyhledat")
-    # It's good practice to provide an icon, even if default
-    # li.setArt({'icon': 'DefaultAddonsSearch.png'}) # Example, if you have icons
-    url = f"{BASE_URL_PLUGIN}?action=initiate_search" # Changed to new action
-    xbmcplugin.addDirectoryItem(handle=addon_handle, url=url, listitem=li, isFolder=True) # isFolder=True, as initiate_search will lead to a list (via search)
+def display_combined_history():
+    xbmcplugin.setPluginCategory(addon_handle, "Historie")
+
+    # Folder for Search History
+    li_search_history_folder = xbmcgui.ListItem(label="Historie vyhledávání")
+    li_search_history_folder.setArt({'icon': 'DefaultAddonsSearch.png', 'thumb': 'DefaultAddonsSearch.png'})
+    url_search_history_folder = f"{BASE_URL_PLUGIN}?action=search" # Shows search history list
+    xbmcplugin.addDirectoryItem(handle=addon_handle, url=url_search_history_folder, listitem=li_search_history_folder, isFolder=True)
+
+    # Playback History Items
+    history_items = load_history() # This correctly loads playback history
+    if not history_items:
+        xbmc.log(f"Kodíček: Playback history is empty (within combined view).", level=xbmc.LOGINFO)
+        # Optional: xbmcgui.Dialog().notification(plugin_name, "Historie přehrávání je prázdná.", xbmcgui.NOTIFICATION_INFO, 2000)
+        pass # Continue to end directory even if empty, search history folder is still there
+
+    # xbmcplugin.setContent(addon_handle, 'videos') # Set content type for playback items
+    # It might be better to set content type only if there are videos, or rely on individual item types.
+    # For a mixed list (folder + items), sometimes it's left unset at category level.
+
+    for item in history_items:
+        if not item.get("ident") or not item.get("name") or item.get("type") != "video":
+            xbmc.log(f"Kodíček: Skipping non-playback item in combined_history: {item}", level=xbmc.LOGINFO)
+            continue
+
+        li = xbmcgui.ListItem(label=item["name"])
+        try:
+            timestamp_str = time.strftime('%d.%m.%Y %H:%M', time.localtime(item['timestamp']))
+        except Exception:
+            timestamp_str = "Neznámé datum"
+        
+        plot_info = f"Naposledy přehráno: {timestamp_str}"
+        li.setInfo("video", {"title": item["name"], "plot": plot_info})
+        li.setProperty('IsPlayable', 'true')
+        # Ensure name is URL-encoded for the parameters
+        url = f"{BASE_URL_PLUGIN}?action=play&ident={item['ident']}&name={urllib.parse.quote(item['name'])}"
+        xbmcplugin.addDirectoryItem(handle=addon_handle, url=url, listitem=li, isFolder=False)
     
-    # Add other main menu items here if needed in the future
-    # e.g., settings, history etc.
-    # li_settings = xbmcgui.ListItem(label="Nastavení")
-    # url_settings = f"{BASE_URL_PLUGIN}?action=settings" # Assuming you might add a settings action
-    # xbmcplugin.addDirectoryItem(handle=addon_handle, url=url_settings, listitem=li_settings, isFolder=False)
+    xbmcplugin.endOfDirectory(addon_handle)
+
+
+def display_main_menu():
+    # Item for initiating a new search (opens keyboard)
+    li_new_search_main_menu = xbmcgui.ListItem(label="Vyhledat film/seriál")
+    li_new_search_main_menu.setArt({'icon': 'DefaultAddonsSearch.png', 'thumb': 'DefaultAddonsSearch.png'})
+    url_new_search_main_menu = f"{BASE_URL_PLUGIN}?action=search&ask=1" # This will trigger the keyboard
+    xbmcplugin.addDirectoryItem(handle=addon_handle, url=url_new_search_main_menu, listitem=li_new_search_main_menu, isFolder=True)
+
+    # Main "Historie" folder
+    li_history_folder = xbmcgui.ListItem(label="Historie")
+    li_history_folder.setArt({'icon': 'DefaultFolder.png', 'thumb': 'DefaultFolder.png'})
+    url_history_folder = f"{BASE_URL_PLUGIN}?action=show_combined_history" # Changed action
+    xbmcplugin.addDirectoryItem(handle=addon_handle, url=url_history_folder, listitem=li_history_folder, isFolder=True)
 
     xbmcplugin.endOfDirectory(addon_handle)
 

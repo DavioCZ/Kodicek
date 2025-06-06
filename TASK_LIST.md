@@ -30,6 +30,7 @@
 - [x] Vytvořit jednoduché vyhledávací pole (dialog v češtině)
 - [x] Implementovat vyhledávání přes Webshare API
 - [x] Výpis základních výsledků (název souboru, velikost, typ)
+- [x] Opravit navigaci zpět po vyhledávání (aby se vracelo do hlavního menu)
 - [ ] Otestovat různé vyhledávací dotazy (správně/špatně/bez výsledků)
 - [x] Přidat přehrávání vybraného výsledku v Kodi
 - [ ] Otestovat přehrávání různých typů souborů
@@ -37,10 +38,27 @@
 ---
 
 ## 4. Implementace základní historie sledování
-- [ ] Ukládat název, čas, typ přehrávaného titulu/epizody do lokálního souboru (JSON)
-- [ ] Zobrazit historii v hlavním menu (název, rok, banner, poslední čas sledování)
+- [x] Ukládat název, čas, typ přehrávaného titulu/epizody do lokálního souboru (JSON) (`history.json`)
+  - [x] Refaktoring pro použití xbmcvfs a translatePath v history.py
+  - [x] Zajistit, aby se do `history.json` ukládaly pouze skutečně přehrávané položky (typ "video").
+- [x] Zobrazit historii přehrávání v hlavním menu (název, poslední čas sledování)
+  - [x] Upřesnit název menu na "Historie přehrávání".
+  - [x] Zajistit, aby se zobrazovaly pouze položky z `history.json` (přehrávané).
 - [ ] Otestovat opakované přehrávání z historie
-- [ ] Ošetřit edge-cases (duplicitní položky, full historie)
+- [x] Ošetřit edge-cases (duplicitní položky, full historie)
+- [x] Implementovat oddělenou historii vyhledávání (`search_history.json`)
+  - [x] Vytvořit funkce v `history.py` pro načítání, ukládání a přidávání do `search_history.json`.
+  - [x] Ukládat vyhledané dotazy (text + timestamp) do `search_history.json` při akci vyhledávání.
+  - [x] Zobrazovat historii vyhledaných dotazů v menu "Vyhledávání", pokud není aktivní vyhledávací dotaz.
+
+---
+
+## X. Oprava UX Bugu Vyhledávání
+- [x] Opravit UX bug s vyhledávacím dialogem (popsáno v zadání)
+  - [x] Zajistit, aby se vyhledávací dialog zobrazil POUZE pokud je explicitně vyvolán (např. `ask=1`)
+  - [x] Upravit položku menu "Vyhledat" tak, aby volala `action=search` s parametrem `ask=1`
+  - [x] Pokud `ask=1` není přítomen, zobrazit historii vyhledávání a další relevantní položky, NE klávesnici.
+  - [x] Odebrat/refaktorovat `action=initiate_search` a sloučit logiku do `action=search`.
 
 ---
 
