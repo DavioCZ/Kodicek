@@ -9,6 +9,7 @@ import xbmcaddon
 import requests
 import hashlib
 import time # Added for history timestamp
+import json # Added for TMDb JSON parsing
 from xml.etree import ElementTree as ET
 from history import add_to_history, load_history, add_to_search_history, load_search_history # Updated imports
 try:
@@ -22,7 +23,8 @@ addon_handle = int(sys.argv[1])
 BASE_URL_PLUGIN = sys.argv[0] # Renamed to avoid conflict if BASE_URL is used for API
 plugin_name = "Kodíček"
 REALM = ':Webshare:'
-API_BASE_URL = "https://webshare.cz/api/"
+WEBSHARE_API_BASE_URL = "https://webshare.cz/api/" # Renamed for clarity
+TMDB_API_BASE_URL = "https://api.themoviedb.org/3/"
 
 # Global session object
 _session = requests.Session()
@@ -32,13 +34,24 @@ def get_credentials():
     username = addon.getSetting("ws_username")
     password = addon.getSetting("ws_password")
     if not username or not password:
-        xbmcgui.Dialog().notification(plugin_name, addon.getLocalizedString(30101), xbmcgui.NOTIFICATION_ERROR)
+        xbmcgui.Dialog().notification(plugin_name, addon.getLocalizedString(30101), xbmcgui.NOTIFICATION_ERROR) # Assuming 30101 is "Webshare credentials missing"
         addon.openSettings()
         return None, None
     return username, password
 
-def api_call(endpoint, data=None, method='post'):
-    url = API_BASE_URL + endpoint + "/"
+def get_tmdb_api_key():
+    tmdb_key = addon.getSetting("tmdb_api_key")
+    if not tmdb_key:
+        xbmcgui.Dialog().notification(plugin_name, "Chybí TMDb API klíč v nastavení!", xbmcgui.NOTIFICATION_ERROR)
+        # addon.openSettings() # Might be too aggressive to open settings here, let the user do it.
+        return None
+    return tmdb_key
+
+def api_call(endpoint, data=None, method='post', base_url=WEBSHARE_API_BASE_URL): # Added base_url parameter
+    url = base_url + endpoint
+    if base_url == WEBSHARE_API_BASE_URL and not endpoint.endswith('/'): # Webshare expects trailing slash
+        url += "/"
+        
     try:
         if method == 'post':
             response = _session.post(url, data=data, timeout=10)
@@ -68,7 +81,7 @@ def login_webshare(username, password):
         xbmcgui.Dialog().notification(plugin_name, "md5crypt module is missing.", xbmcgui.NOTIFICATION_ERROR)
         return None
 
-    salt_response_content = api_call('salt', {'username_or_email': username})
+    salt_response_content = api_call('salt', {'username_or_email': username}, base_url=WEBSHARE_API_BASE_URL)
     if not salt_response_content:
         return None
     
@@ -122,7 +135,7 @@ def login_webshare(username, password):
         'keep_logged_in': '1'
     }
     
-    login_response_content = api_call('login', login_data)
+    login_response_content = api_call('login', login_data, base_url=WEBSHARE_API_BASE_URL)
     if not login_response_content:
         return None
 
@@ -158,7 +171,8 @@ def search_webshare(token, query):
         'limit': 30, # As per original kodicek
         'sort': 'rating' # Example sort
     }
-    search_response_content = api_call('search', search_params, method='post') # Example uses POST for search
+    # Webshare search is POST, ensure api_call handles it correctly
+    search_response_content = api_call('search', search_params, method='post', base_url=WEBSHARE_API_BASE_URL)
     
     if not search_response_content:
         return []
@@ -194,7 +208,7 @@ def get_stream_link(token, ident):
     ]
     for link_params in possible_params:
         xbmc.log(f"Kodíček: get_stream_link - Requesting link with params: {link_params}", level=xbmc.LOGINFO)
-        link_response_content = api_call('file_link', link_params, method='post')
+        link_response_content = api_call('file_link', link_params, method='post', base_url=WEBSHARE_API_BASE_URL)
         if not link_response_content:
             xbmc.log(f"Kodíček: get_stream_link - No response content from api_call for ident: {ident}", level=xbmc.LOGERROR)
             continue
@@ -238,6 +252,122 @@ def get_mimetype(filename):
             return 'video/mp2t'
         # Add more common video extensions if needed
     return 'application/octet-stream' # Default
+
+# --- Helper Functions ---
+def normalize_text(text):
+    """
+    Normalizes text for comparison:
+    - Converts to lowercase.
+    - Replaces common separators (space, underscore, dot) with a single dot.
+    - Removes basic diacritics (can be expanded with unidecode or similar if available).
+    """
+    if not text:
+        return ""
+    text = text.lower()
+    # Basic diacritics removal for Czech/Slovak - can be improved
+    replacements = {
+        'á': 'a', 'č': 'c', 'ď': 'd', 'é': 'e', 'ě': 'e', 'í': 'i', 'ň': 'n',
+        'ó': 'o', 'ř': 'r', 'š': 's', 'ť': 't', 'ú': 'u', 'ů': 'u', 'ý': 'y',
+        'ž': 'z', 'ľ': 'l', 'ĺ': 'l', 'ŕ': 'r', 'ä': 'a', 'ô': 'o'
+    }
+    for char_from, char_to in replacements.items():
+        text = text.replace(char_from, char_to)
+    
+    # Replace common separators with a dot
+    text = text.replace(' ', '.').replace('_', '.').replace('-', '.')
+    # Remove other non-alphanumeric characters (except dots for separation)
+    import re
+    text = re.sub(r'[^\w.]', '', text) # Keep word characters and dots
+    text = re.sub(r'\.+', '.', text) # Replace multiple dots with a single dot
+    return text.strip('.')
+
+
+# --- TMDb Functions ---
+def search_tmdb(api_key, query, year=None, media_type='movie', language='cs-CZ'):
+    """
+    Searches TMDb for movies or TV shows.
+    media_type can be 'movie' or 'tv'.
+    Returns a list of results or None on error.
+    """
+    if not api_key:
+        xbmc.log("Kodíček: TMDb API key is missing for search_tmdb.", level=xbmc.LOGERROR)
+        return None
+
+    endpoint = f"search/{media_type}"
+    params = {
+        'api_key': api_key,
+        'query': query,
+        'language': language
+    }
+    if year:
+        if media_type == 'movie':
+            params['year'] = year
+        elif media_type == 'tv':
+            params['first_air_date_year'] = year
+    
+    xbmc.log(f"Kodíček: Searching TMDb ({media_type}): Query='{query}', Year='{year}', Lang='{language}'", level=xbmc.LOGINFO)
+    
+    try:
+        # Using _session for consistency, though api_call could be adapted
+        response = _session.get(TMDB_API_BASE_URL + endpoint, params=params, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        
+        if data and 'results' in data:
+            xbmc.log(f"Kodíček: TMDb search found {len(data['results'])} results.", level=xbmc.LOGINFO)
+            return data['results']
+        else:
+            xbmc.log(f"Kodíček: TMDb search returned no results or unexpected format for query: {query}", level=xbmc.LOGINFO)
+            return []
+            
+    except requests.exceptions.RequestException as e:
+        xbmc.log(f"Kodíček: TMDb API call to {endpoint} failed: {e}", level=xbmc.LOGERROR)
+        xbmcgui.Dialog().notification(plugin_name, f"TMDb Error: {e}", xbmcgui.NOTIFICATION_ERROR)
+        return None
+    except json.JSONDecodeError as e:
+        xbmc.log(f"Kodíček: Failed to parse TMDb JSON response: {e}", level=xbmc.LOGERROR)
+        xbmcgui.Dialog().notification(plugin_name, "TMDb Error: Invalid response.", xbmcgui.NOTIFICATION_ERROR)
+        return None
+
+def get_tmdb_details(api_key, tmdb_id, media_type='movie', language='cs-CZ'):
+    """
+    Fetches details for a specific movie or TV show from TMDb.
+    media_type can be 'movie' or 'tv'.
+    Returns a dictionary of details or None on error.
+    """
+    if not api_key:
+        xbmc.log("Kodíček: TMDb API key is missing for get_tmdb_details.", level=xbmc.LOGERROR)
+        return None
+    if not tmdb_id:
+        xbmc.log("Kodíček: TMDb ID is missing for get_tmdb_details.", level=xbmc.LOGERROR)
+        return None
+
+    endpoint = f"{media_type}/{tmdb_id}"
+    params = {
+        'api_key': api_key,
+        'language': language,
+        'append_to_response': 'credits,images,videos' # Example: get more data
+    }
+    
+    xbmc.log(f"Kodíček: Fetching TMDb details ({media_type}) for ID: {tmdb_id}, Lang='{language}'", level=xbmc.LOGINFO)
+
+    try:
+        response = _session.get(TMDB_API_BASE_URL + endpoint, params=params, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        xbmc.log(f"Kodíček: TMDb details fetched successfully for ID: {tmdb_id}", level=xbmc.LOGINFO)
+        return data
+            
+    except requests.exceptions.RequestException as e:
+        xbmc.log(f"Kodíček: TMDb API call to {endpoint} (details) failed: {e}", level=xbmc.LOGERROR)
+        xbmcgui.Dialog().notification(plugin_name, f"TMDb Error: {e}", xbmcgui.NOTIFICATION_ERROR)
+        return None
+    except json.JSONDecodeError as e:
+        xbmc.log(f"Kodíček: Failed to parse TMDb JSON details response: {e}", level=xbmc.LOGERROR)
+        xbmcgui.Dialog().notification(plugin_name, "TMDb Error: Invalid details response.", xbmcgui.NOTIFICATION_ERROR)
+        return None
+
+# --- End TMDb Functions ---
 
 def router(paramstring):
     params = dict(urllib.parse.parse_qsl(paramstring))
@@ -288,10 +418,79 @@ def router(paramstring):
                 what_to_search = None # Ensure it's None to show history menu
 
         if what_to_search:
-            xbmc.log(f"Kodíček: Performing search for: {what_to_search}", level=xbmc.LOGINFO)
-            files = search_webshare(token, what_to_search)
+            xbmc.log(f"Kodíček: Performing Webshare search for: {what_to_search}", level=xbmc.LOGINFO) # Clarified log
+
+            # --- TMDb Integration Start ---
+            tmdb_api_key = get_tmdb_api_key()
+            tmdb_results_to_display = []
+
+            if tmdb_api_key:
+                parsed_query_for_tmdb = what_to_search
+                parsed_year_for_tmdb = None
+                # Try to parse year if query ends with 4 digits (e.g., "Movie Title 2023")
+                if len(what_to_search) > 5 and what_to_search[-4:].isdigit() and what_to_search[-5] == ' ':
+                    parsed_query_for_tmdb = what_to_search[:-5].strip()
+                    parsed_year_for_tmdb = what_to_search[-4:]
+                    xbmc.log(f"Kodíček: Parsed for TMDb - Query: '{parsed_query_for_tmdb}', Year: '{parsed_year_for_tmdb}'", level=xbmc.LOGINFO)
+
+                # Search for movies on TMDb
+                tmdb_movie_results = search_tmdb(tmdb_api_key, parsed_query_for_tmdb, year=parsed_year_for_tmdb, media_type='movie')
+                if tmdb_movie_results:
+                    xbmc.log(f"Kodíček: Found {len(tmdb_movie_results)} movie results from TMDb.", level=xbmc.LOGINFO)
+                    tmdb_results_to_display.extend(tmdb_movie_results)
+                
+                # Optionally, search for TV shows if no movies or based on user preference (future enhancement)
+                # For now, focusing on movies. If you want to add TV, uncomment and adapt:
+                # if not tmdb_movie_results: # Example: search TV if no movies found
+                #    tmdb_tv_results = search_tmdb(tmdb_api_key, parsed_query_for_tmdb, year=parsed_year_for_tmdb, media_type='tv')
+                #    if tmdb_tv_results:
+                #        xbmc.log(f"Kodíček: Found {len(tmdb_tv_results)} TV results from TMDb.", level=xbmc.LOGINFO)
+                #        tmdb_results_to_display.extend(tmdb_tv_results) # Need to handle media_type difference
+
+            if tmdb_results_to_display:
+                xbmcplugin.setPluginCategory(addon_handle, f"TMDb Výsledky pro: {what_to_search}")
+                xbmcplugin.setContent(addon_handle, 'movies') # or 'tvshows' or 'videos'
+
+                for item in tmdb_results_to_display:
+                    media_type = 'movie' # Assuming movie for now, adjust if TV shows are mixed
+                    tmdb_id = item.get('id')
+                    title = item.get('title') if media_type == 'movie' else item.get('name')
+                    overview = item.get('overview', '')
+                    poster_path = item.get('poster_path')
+                    release_date = item.get('release_date') if media_type == 'movie' else item.get('first_air_date')
+                    year = release_date[:4] if release_date and len(release_date) >= 4 else ""
+
+                    display_title = f"{title} ({year})" if year else title
+                    li = xbmcgui.ListItem(label=display_title)
+                    
+                    info_labels = {'title': title, 'plot': overview}
+                    if year:
+                        info_labels['year'] = int(year)
+                    
+                    art_data = {}
+                    if poster_path:
+                        art_data['thumb'] = f"https://image.tmdb.org/t/p/w500{poster_path}"
+                        art_data['poster'] = f"https://image.tmdb.org/t/p/w500{poster_path}"
+                        # art_data['fanart'] = f"https://image.tmdb.org/t/p/original{item.get('backdrop_path')}" # If backdrop is needed
+                    
+                    li.setArt(art_data)
+                    li.setInfo('video', info_labels)
+                    li.setProperty('IsPlayable', 'false') # It's a folder leading to selection/Webshare
+
+                    url = f"{BASE_URL_PLUGIN}?action=process_tmdb_selection&tmdb_id={tmdb_id}&media_type={media_type}&title={urllib.parse.quote(title)}&year={year}"
+                    xbmcplugin.addDirectoryItem(handle=addon_handle, url=url, listitem=li, isFolder=True)
+                
+                xbmcplugin.endOfDirectory(addon_handle, succeeded=True)
+                return # Stop here, TMDb results are shown
+            
+            else: # No TMDb results, proceed to Webshare search with original query
+                xbmc.log("Kodíček: No results from TMDb, proceeding with Webshare search.", level=xbmc.LOGINFO)
+            # --- TMDb Integration End ---
+
+            # Proceed with Webshare search (original logic if no TMDb results or API key issue)
+            files = search_webshare(token, what_to_search) 
             if not files:
-                xbmcgui.Dialog().notification(plugin_name, "Nic nebylo nalezeno.", xbmcgui.NOTIFICATION_INFO)
+                xbmcgui.Dialog().notification(plugin_name, "Nic nebylo nalezeno na Webshare.", xbmcgui.NOTIFICATION_INFO)
                 # Display search history/options menu even if no results, allowing new search
                 xbmcplugin.setPluginCategory(addon_handle, f"Vyhledávání (nic pro '{what_to_search}')")
                 li_new_search = xbmcgui.ListItem(label="Nové vyhledávání...")
@@ -467,10 +666,204 @@ def router(paramstring):
 
     elif action == "show_combined_history":
         display_combined_history()
+    
+    elif action == "process_tmdb_selection":
+        process_tmdb_selection(params, token)
+
+    elif action == 'movies':
+        movies(params)
+    elif action == 'series':
+        series(params)
 
     else: # No action or unknown action - show main menu
         display_main_menu()
 
+def process_tmdb_selection(params, token):
+    tmdb_id = params.get('tmdb_id')
+    media_type = params.get('media_type', 'movie')
+    title = params.get('title', '') # Already URL decoded by parse_qsl
+    year = params.get('year', '')
+
+    xbmc.log(f"Kodíček: Processing TMDb selection: ID={tmdb_id}, Type={media_type}, Title='{title}', Year='{year}'", level=xbmc.LOGINFO)
+
+    tmdb_api_key = get_tmdb_api_key()
+    detailed_tmdb_item = None
+    if tmdb_api_key and tmdb_id:
+        detailed_tmdb_item = get_tmdb_details(tmdb_api_key, tmdb_id, media_type)
+        if detailed_tmdb_item:
+            xbmc.log(f"Kodíček: Fetched details for TMDb ID {tmdb_id}: {detailed_tmdb_item.get('title') or detailed_tmdb_item.get('name')}", level=xbmc.LOGINFO)
+            # Update title and year from detailed info if available and more precise
+            title = detailed_tmdb_item.get('title') if media_type == 'movie' else detailed_tmdb_item.get('name', title)
+            release_date = detailed_tmdb_item.get('release_date') if media_type == 'movie' else detailed_tmdb_item.get('first_air_date')
+            if release_date and len(release_date) >= 4:
+                year = release_date[:4]
+        else:
+            xbmc.log(f"Kodíček: Could not fetch details for TMDb ID {tmdb_id}. Using passed title/year.", level=xbmc.LOGWARNING)
+
+    # Prepare TMDb data for matching
+    normalized_tmdb_title = normalize_text(title)
+    tmdb_year_str = str(year) if year else ""
+    xbmc.log(f"Kodíček: Normalized TMDb title for matching: '{normalized_tmdb_title}', Year: '{tmdb_year_str}'", level=xbmc.LOGINFO)
+
+    # Search Webshare using a broader query initially (e.g., just title, or title + year)
+    # The scoring will then refine this.
+    webshare_search_query = title
+    if tmdb_year_str:
+         webshare_search_query = f"{title} {tmdb_year_str}" # Use original title for WS search, normalization for scoring
+
+    xbmc.log(f"Kodíček: Searching Webshare with query: '{webshare_search_query}'", level=xbmc.LOGINFO)
+    webshare_files = search_webshare(token, webshare_search_query)
+
+    if not webshare_files:
+        xbmcgui.Dialog().notification(plugin_name, f"Pro '{title}' nebyly na Webshare nalezeny žádné soubory.", xbmcgui.NOTIFICATION_INFO)
+        xbmcplugin.endOfDirectory(addon_handle, succeeded=True)
+        return
+
+    scored_files = []
+    MIN_SCORE_THRESHOLD = 3.0 # Define a minimum score threshold
+
+    for ws_file in webshare_files:
+        fname_normalized = normalize_text(ws_file.get('name', ''))
+        score = 0.0 # Use float for scores
+
+        # --- Stricter Matching Logic ---
+
+        # 1. Hard exclusion if normalized TMDb title is not part of the filename
+        #    Also, ensure the core part of the title is present.
+        #    Example: if tmdb is "spiderman", filename must contain "spiderman"
+        #    This is a basic substring check. More advanced fuzzy matching could be used if available.
+        core_tmdb_title_parts = normalized_tmdb_title.split('.')
+        # Require at least one significant part of the title to be present if title has multiple words
+        # or the whole title if it's a single word.
+        # This is a simple heuristic; can be refined.
+        # For "spider.man", it checks if "spider" or "man" is in fname_normalized.
+        # For "spiderman", it checks if "spiderman" is in fname_normalized.
+        
+        # More direct: Check if the full normalized_tmdb_title is in fname_normalized
+        if normalized_tmdb_title not in fname_normalized:
+            # If the exact normalized title isn't there, try a more lenient check for parts.
+            # This is to catch cases like "Spider-Man" (normalized "spider.man") vs "Spider Man Uncased"
+            # However, the primary goal is stricter filtering, so we might make this penalty high.
+            # For now, let's implement the direct exclusion as suggested.
+            score = -100 # Heavily penalize or mark for exclusion
+            xbmc.log(f"Kodíček: File '{fname_normalized}' rejected: TMDb title '{normalized_tmdb_title}' not found.", level=xbmc.LOGDEBUG)
+        else:
+            # If the exact normalized title is found, give a significant bonus
+            score += 3.0 # Increased base score for title match
+
+        # 2. Year Matching (if score is still potentially positive)
+        if score > -10: # Proceed only if not hard-excluded
+            if tmdb_year_str: # If TMDb has a year
+                if tmdb_year_str in fname_normalized:
+                    score += 2.0  # Strong bonus for year match
+                else:
+                    # Penalize if year is expected but not found.
+                    # This helps differentiate "Movie Title" from "Movie Title The Series" if year is specific.
+                    score -= 1.0
+            # If TMDb has no year, we don't penalize for year in filename, but don't reward either.
+
+        # --- Language Scoring (remains similar, adjust weights if needed) ---
+        if score > -10:
+            lang_bonus = 0.0
+            if any(lang_tag in fname_normalized for lang_tag in ['.cz', '.cze', '.cesky', '.dabing.cz', '.cz.dab']):
+                lang_bonus = 2.0
+            elif any(lang_tag in fname_normalized for lang_tag in ['.sk', '.svk', '.slovensky', '.dabing.sk', '.sk.dab']):
+                lang_bonus = 1.5 # SK slightly lower or same as CZ based on preference
+            elif any(lang_tag in fname_normalized for lang_tag in ['.en', '.eng', '.english']):
+                lang_bonus = 0.5
+            score += lang_bonus
+
+        # --- Quality Scoring (remains similar, adjust weights if needed) ---
+        if score > -10:
+            quality_bonus = 0.0
+            if '2160p' in fname_normalized or '4k' in fname_normalized: quality_bonus = 2.0
+            elif '1080p' in fname_normalized or '1080i' in fname_normalized: quality_bonus = 1.5
+            elif '720p' in fname_normalized or '720i' in fname_normalized: quality_bonus = 1.0
+            elif 'bluray' in fname_normalized: quality_bonus = 1.2
+            elif 'webrip' in fname_normalized or 'web-dl' in fname_normalized or 'web' in fname_normalized : quality_bonus = 0.8
+            elif 'dvdrip' in fname_normalized or 'dvd' in fname_normalized : quality_bonus = 0.5
+            # Penalize CAM/TS/TC heavily if detected
+            if any(bad_quality in fname_normalized for bad_quality in ['.cam.', '.ts.', '.tc.', '.camrip.', '.telesync.']):
+                quality_bonus -= 3.0
+            score += quality_bonus
+        
+        # --- File Type Check (ensure it's a video file) ---
+        original_filename = ws_file.get('name', '').lower()
+        is_video_file = any(original_filename.endswith(ext) for ext in ['.mkv', '.mp4', '.avi', '.mov', '.wmv', '.flv', '.ts', '.mpg', '.mpeg', '.iso'])
+        if not is_video_file:
+            score = -200 # Definitely exclude non-video files
+
+        # --- Final Check against Threshold ---
+        if score >= MIN_SCORE_THRESHOLD:
+            scored_files.append({'file': ws_file, 'score': score, 'normalized_name': fname_normalized})
+            xbmc.log(f"Kodíček: Scored file: '{ws_file['name']}' (Normalized: '{fname_normalized}') -> Score: {score:.2f}", level=xbmc.LOGDEBUG)
+        else:
+            xbmc.log(f"Kodíček: File '{ws_file['name']}' (Normalized: '{fname_normalized}') did NOT meet threshold. Score: {score:.2f}", level=xbmc.LOGDEBUG)
+
+
+    # Sort files by score in descending order
+    scored_files.sort(key=lambda x: x['score'], reverse=True)
+
+    if not scored_files:
+        xbmcgui.Dialog().notification(plugin_name, f"Pro '{title} ({year})': žádné dostatečně relevantní soubory na Webshare.", xbmcgui.NOTIFICATION_INFO)
+        xbmcplugin.endOfDirectory(addon_handle, succeeded=True)
+        return
+
+    xbmcplugin.setPluginCategory(addon_handle, f"Webshare zdroje pro: {title} ({year}) - Seřazeno")
+    xbmcplugin.setContent(addon_handle, 'videos')
+
+    for scored_item in scored_files:
+        file_item = scored_item['file']
+        display_label = f"[S: {scored_item['score']:.1f}] {file_item['name']}"
+        li = xbmcgui.ListItem(label=display_label)
+        
+        size_bytes = file_item.get("size", 0)
+        if size_bytes > 1024*1024*1024: size_str = f"{size_bytes/(1024*1024*1024):.2f} GB"
+        elif size_bytes > 1024*1024: size_str = f"{size_bytes/(1024*1024):.2f} MB"
+        elif size_bytes > 1024: size_str = f"{size_bytes/1024:.0f} KB"
+        else: size_str = f"{size_bytes} B"
+        
+        plot_info = f"Velikost: {size_str}\nNormalizovaný název: {scored_item['normalized_name']}"
+        
+        # Use TMDb info for art and richer plot if available
+        art_data = {}
+        if detailed_tmdb_item:
+            info_labels = {
+                'title': detailed_tmdb_item.get('title', file_item['name']), # Prefer TMDb title
+                'originaltitle': detailed_tmdb_item.get('original_title', file_item['name']),
+                'plot': detailed_tmdb_item.get('overview', plot_info),
+                'plotoutline': detailed_tmdb_item.get('overview', plot_info),
+                'tagline': detailed_tmdb_item.get('tagline'),
+                'rating': detailed_tmdb_item.get('vote_average'),
+                'votes': detailed_tmdb_item.get('vote_count'),
+                'premiered': detailed_tmdb_item.get('release_date'),
+                'year': int(year) if year and year.isdigit() else None,
+                'genre': ", ".join([g['name'] for g in detailed_tmdb_item.get('genres', [])]),
+                'mediatype': 'video', # or 'movie' / 'tvshow'
+                'size': size_bytes
+            }
+            poster = detailed_tmdb_item.get('poster_path')
+            fanart = detailed_tmdb_item.get('backdrop_path')
+            if poster: art_data['thumb'] = art_data['poster'] = f"https://image.tmdb.org/t/p/w500{poster}"
+            if fanart: art_data['fanart'] = f"https://image.tmdb.org/t/p/original{fanart}"
+            li.setArt(art_data)
+            li.setInfo('video', info_labels)
+        else:
+            li.setInfo("video", {"title": file_item["name"], "size": size_bytes, "plot": plot_info})
+
+        li.setProperty('IsPlayable', 'true')
+        url = f"{BASE_URL_PLUGIN}?action=play&ident={file_item['ident']}&name={urllib.parse.quote(file_item['name'])}"
+        xbmcplugin.addDirectoryItem(handle=addon_handle, url=url, listitem=li, isFolder=False)
+        
+    xbmcplugin.endOfDirectory(addon_handle, succeeded=True)
+
+def movies(params):
+    xbmcgui.Dialog().notification(plugin_name, "Zde bude seznam filmů.", xbmcgui.NOTIFICATION_INFO, 2500)
+    xbmcplugin.endOfDirectory(addon_handle)
+
+def series(params):
+    xbmcgui.Dialog().notification(plugin_name, "Zde bude seznam seriálů.", xbmcgui.NOTIFICATION_INFO, 2500)
+    xbmcplugin.endOfDirectory(addon_handle)
 
 def display_combined_history():
     xbmcplugin.setPluginCategory(addon_handle, "Historie")
@@ -519,6 +912,18 @@ def display_main_menu():
     li_new_search_main_menu.setArt({'icon': 'DefaultAddonsSearch.png', 'thumb': 'DefaultAddonsSearch.png'})
     url_new_search_main_menu = f"{BASE_URL_PLUGIN}?action=search&ask=1" # This will trigger the keyboard
     xbmcplugin.addDirectoryItem(handle=addon_handle, url=url_new_search_main_menu, listitem=li_new_search_main_menu, isFolder=True)
+
+    # Filmy (nová položka)
+    listitem_movies = xbmcgui.ListItem(label="Filmy")
+    listitem_movies.setArt({'icon': 'DefaultMovies.png'}) # Changed icon
+    url_movies = f"{BASE_URL_PLUGIN}?action=movies"
+    xbmcplugin.addDirectoryItem(handle=addon_handle, url=url_movies, listitem=listitem_movies, isFolder=True)
+
+    # Seriály (nová položka)
+    listitem_series = xbmcgui.ListItem(label="Seriály")
+    listitem_series.setArt({'icon': 'DefaultTVShows.png'})
+    url_series = f"{BASE_URL_PLUGIN}?action=series"
+    xbmcplugin.addDirectoryItem(handle=addon_handle, url=url_series, listitem=listitem_series, isFolder=True)
 
     # Main "Historie" folder
     li_history_folder = xbmcgui.ListItem(label="Historie")

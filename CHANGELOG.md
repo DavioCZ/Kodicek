@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.0] - 2025-06-06
 
 ### Added
+- Added "Filmy" (Movies) and "Seriály" (Series) items to the main menu in `kodicek.py`.
+  - These items currently lead to placeholder functions that display a notification.
+  - Routing for these new actions (`movies` and `series`) has been added to the `router` function.
 - Implemented playback history functionality:
   - Created `history.py` with functions to load, save, and add items to a JSON-based history file (`history.json`) stored in the addon's profile directory.
   - History is limited to the last 100 items, with duplicates (based on 'ident') being removed and the newest entry added to the top.
@@ -59,4 +62,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Initial TMDb integration for movie searching:
+  - Added setting in `resources/settings.xml` for TMDb API key.
+  - Implemented `get_tmdb_api_key()` to retrieve the key in `kodicek.py`.
+  - Added `search_tmdb()` and `get_tmdb_details()` functions for interacting with the TMDb API (movies and TV shows, though currently focused on movies).
+  - Modified the `search` action in `kodicek.py`:
+    - Parses the search query for a potential year.
+    - If TMDb API key is present, searches TMDb for movies.
+    - If TMDb results are found, they are displayed to the user with title, year, overview, and poster.
+    - Added a new `process_tmdb_selection` action:
+      - Triggered when a user selects a TMDb result.
+      - Fetches detailed TMDb info (currently logged, for future use).
+      - Uses the selected TMDb item's title and year to perform a refined search on Webshare.
+      - Displays Webshare results based on the TMDb selection.
+    - If no TMDb results are found, the plugin falls back to searching Webshare with the original user query.
+- Implemented smart filtering and scoring of Webshare results in `process_tmdb_selection` action:
+  - Added `normalize_text()` helper function for cleaning and standardizing titles for comparison.
+  - After selecting a TMDb item, Webshare search results are fetched.
+  - Each Webshare file is scored based on matching the normalized TMDb title, year, language indicators (CZ, SK, EN), and quality keywords (1080p, 720p, bluray, etc.).
+  - Non-video files are penalized.
+  - Results are sorted by score, and the score is displayed alongside the filename.
+  - TMDb metadata (poster, plot, genre, etc.) is used to enrich the `ListItem` for the sorted Webshare results.
 - Initial project setup.
+
+### Changed
+- Updated `TASK_LIST.md` with a detailed plan for TMDb integration (API key, search, details, images) and Webshare result filtering (name/year matching, scoring algorithm, file type filtering).
+- Enhanced the scoring logic in `process_tmdb_selection` for stricter and more accurate filtering of Webshare results:
+  - Implemented a `MIN_SCORE_THRESHOLD` (set to 3.0). Files scoring below this are discarded.
+  - Title matching is stricter: `normalized_tmdb_title` must be a substring of `fname_normalized`. If not, the file is heavily penalized (score = -100). A successful match grants a +3.0 bonus.
+  - Year matching: If TMDb year is present and matches in `fname_normalized`, score +2.0. If TMDb year is present but not found in filename, score -1.0.
+  - Language scoring adjusted: `.cz.dab` and `.sk.dab` added to Czech and Slovak language tags. Slovak bonus set to 1.5.
+  - Quality scoring expanded: Added `2160p`/`4k` (+2.0 bonus). Added `web` as a general web-dl/webrip indicator. Penalizes CAM/TS/TC rips by -3.0.
+  - File type check now includes `.mpg`, `.mpeg`, `.iso` as valid video extensions. Non-video files get a score of -200.
+  - Logging for scored/rejected files now includes the score formatted to two decimal places.
+  - Notification message updated if no files meet the threshold after filtering.

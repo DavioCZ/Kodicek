@@ -15,6 +15,7 @@
 - [x] Připravit `resources/settings.xml` s nastavením pro Webshare login/heslo (čeština)
 - [x] Otestovat instalaci pluginu do Kodi („Doplňky > Instalovat ze ZIP“)
 - [x] Otestovat zobrazení pluginu v menu Kodi
+- [x] Přidat položky "Filmy" a "Seriály" do hlavního menu s placeholder funkcemi
 
 ---
 
@@ -63,22 +64,102 @@
 ---
 
 ## 5. Chytré vyhledávání pomocí TMDB API
-- [ ] Získat TMDB API klíč (uložit do `.env` nebo Kodi settings)
-- [ ] Implementovat funkci na vyhledávání v TMDB podle uživatelského dotazu (fuzzy search)
-- [ ] Načítat bannery, popisy, typ, rok z TMDB a zobrazovat u výsledků
-- [ ] Testovat různé varianty zadání (Spider man/spider-man/…)
-- [ ] Přidat zobrazení podobných titulů (rebooty, série, univerza, žánr)
+- [x] **Získání a uložení TMDB API klíče:**
+    - [x] Zaregistrovat se na TMDb a získat API klíč. (User provided)
+    - [x] Uložit API klíč bezpečně (např. v Kodi settings).
+- [x] **Implementace vyhledávání filmů a seriálů přes TMDb API:** (Movies implemented, TV shows can be added)
+    - [x] Funkce pro vyhledávání filmů: `https://api.themoviedb.org/3/search/movie?api_key=TVUJ_KLIC&language=cs&query=NÁZEV&year=ROK`
+    - [ ] Funkce pro vyhledávání seriálů: `https://api.themoviedb.org/3/search/tv?api_key=TVUJ_KLIC&language=cs&query=NÁZEV&first_air_date_year=ROK` (Placeholder for future)
+    - [x] Zpracovat uživatelský dotaz (např. "Pán prstenů 2001") a extrahovat název a rok.
+    - [x] Získat první/více výsledků, umožnit výběr nejrelevantnějšího. (Displayed as a list for user selection)
+- [x] **Načítání detailů titulu z TMDb:**
+    - [x] Pro vybrané ID titulu stáhnout detaily (např. přes `/movie/{movie_id}` nebo `/tv/{tv_id}`).
+    - [x] Získat obrázky (poster, backdrop), žánry, popis, český název, originální název, rok vydání. (Used for enriching ListItems)
+- [x] **Získávání a skládání URL obrázků (poster, backdrop):**
+    - [x] Poster: `https://image.tmdb.org/t/p/w500/POSTER_PATH.jpg` (možnost volby šířky: w92, w154, w342, w500, w780, original). (w500 used)
+    - [x] Backdrop: `https://image.tmdb.org/t/p/original/BACKDROP_PATH.jpg`. (Used for fanart)
+- [x] **Zobrazení informací z TMDb ve výsledcích Kodi:**
+    - [x] `label`: Název (z TMDb, nebo původní název souboru).
+    - [x] `plot`: Popis filmu (z TMDb).
+    - [x] `banner/thumb`: Poster/Backdrop z TMDb.
+    - [x] `year`: Rok vydání.
+    - [x] `genre`: Žánry (volitelně).
+    - [x] Příklad implementace: (Implemented in `process_tmdb_selection` and `search` action)
+      ```python
+      li = xbmcgui.ListItem(label=tmdb_name)
+      li.setArt({'thumb': poster_url, 'banner': backdrop_url})
+      li.setInfo('video', {
+          'title': tmdb_name,
+          'plot': tmdb_overview,
+          'year': tmdb_year,
+          # další info
+      })
+      li.setProperty('IsPlayable', 'true')
+      ```
+- [ ] Testovat různé varianty zadání (Spider man/spider-man/…).
+- [ ] Přidat zobrazení podobných titulů (rebooty, série, univerza, žánr).
+- [ ] **Pokročilé tipy pro TMDb:**
+    - [ ] Pokud je víc TMDb výsledků (remaky, seriály vs. filmy), zobrazit uživateli výběr „Myslel jste: ...?“
+    - [ ] Možné cachovat TMDb odpovědi (omezení počtu dotazů).
 
 ---
 
-## 6. Filtrování a výběr správných zdrojů
-- [ ] Propojovat vyhledaný titul z TMDB s výsledky z Webshare (název, rok, číslo série/epizody)
-- [ ] Filtrovat výsledky podle:
-    - správného roku
-    - typu souboru (jen video)
-    - (volitelně) jazyk, titulky, kvalita
-- [ ] Otestovat, že nikdy nenabídnu prázdnou volbu zdrojů
-- [ ] Přidat uživatelsky přívětivou hlášku při nenalezení zdroje
+## 6. Filtrování a výběr správných zdrojů (Matching s Webshare)
+- [x] **Propojení TMDb titulu s výsledky z Webshare:**
+    - [x] Porovnávat název souboru z Webshare s originálním/českým názvem z TMDb.
+        - [x] Normalizovat názvy (malá písmena, odstranit diakritiku, speciální znaky, nahradit mezery `_` nebo `.`).
+    - [x] Porovnávat rok vydání (pokud je v názvu/metadata souboru).
+- [x] **Implementace algoritmu pro filtrování a skórování souborů z Webshare:**
+    - [x] Vytvořit funkci `normalize(text)` pro úpravu názvů.
+    - [x] Pro každý soubor z Webshare:
+        - [x] Zkontrolovat shodu normalizovaného názvu a roku s TMDb.
+        - [x] Přidělovat skóre na základě kritérií:
+            - [x] Shoda názvu a roku (základní skóre). (Vylepšeno pro striktnější shodu názvu a roku)
+            - [x] Přítomnost jazykové stopy (CZ, CZE, český, SK, EN, ENG – preferovat CZ).
+            - [x] Kvalita (1080p, 720p, BluRay, WEBRip). (Rozšířeno o 4K a penalizaci za CAM/TS)
+            - [x] Další relevantní pravidla. (File type check implemented, přidán MIN_SCORE_THRESHOLD)
+    - [x] Seřadit výsledky podle skóre (nejlepší nahoře).
+    - [x] Vybrat soubor s nejvyšším skóre; pokud žádný nevyhovuje, vzít první dostupný z Webshare jako fallback. (User selects from sorted list; fallback if no scored files meeting threshold)
+    - [x] Příklad algoritmu (pseudo): (Implemented and enhanced in `process_tmdb_selection`)
+      ```python
+      # Po získání výsledků z TMDb a Webshare:
+      tmdb_name = 'Forrest Gump' # normalizovaný
+      tmdb_year = 1994
+      files = [ ... ] # seznam z Webshare
+
+      def normalize(text):
+          # Převod na malá písmena, odstranění diakritiky a speciálních znaků, nahradit mezery
+          text = text.lower()
+          # ... (implementace odstranění diakritiky a speciálních znaků)
+          text = text.replace(' ', '.').replace('_', '.') # Příklad náhrady mezer
+          return text
+
+      results = []
+      normalized_tmdb_name = normalize(tmdb_name)
+      for f in files:
+          fname_normalized = normalize(f['name'])
+          score = 0
+          if normalized_tmdb_name in fname_normalized and str(tmdb_year) in fname_normalized:
+              score += 2 # Základní shoda
+              if 'cz' in fname_normalized or 'cze' in fname_normalized or 'česky' in fname_normalized:
+                  score += 2 # Český jazyk
+              if '1080p' in fname_normalized:
+                  score += 1 # HD kvalita
+              # ... další pravidla pro kvalitu, typ souboru atd.
+              if score > 0:
+                  results.append((score, f))
+      
+      results.sort(key=lambda x: x[0], reverse=True) # Nejlepší nahoře
+      vybrany_soubor = results[0][1] if results else (files[0] if files else None) # Pokud nic, vezmi první, pokud existuje
+      ```
+- [x] **Filtrovat výsledky podle:**
+    - [x] Správného roku.
+    - [x] Typu souboru (jen video: .mp4, .mkv, .avi…).
+    - [x] (Volitelně) Jazyk, titulky, kvalita – již částečně řešeno skórováním.
+- [ ] Otestovat, že nikdy nenabídnu prázdnou volbu zdrojů (pokud Webshare něco vrátí).
+- [ ] Přidat uživatelsky přívětivou hlášku při nenalezení vhodného zdroje na Webshare. (Basic notification exists)
+- [ ] **Pokročilé tipy pro filtrování:**
+    - [ ] Pokud nenajdeš přesnou shodu, nabídnout víc verzí (uživatel si vybere). (User selects from sorted list)
 
 ---
 
