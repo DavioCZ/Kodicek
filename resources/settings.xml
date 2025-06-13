@@ -2,4 +2,9 @@
 <settings>
     <setting id="ws_username" type="text" label="Webshare Uživatelské jméno" default=""/>
     <setting id="ws_password" type="text" label="Webshare Heslo" option="hidden" default=""/>
+    <setting id="tmdb_skip_specials"
+             type="bool"
+             label="Přeskočit speciály (Season 0)"
+             default="true"
+             lvalues="false|true" />
 </settings>

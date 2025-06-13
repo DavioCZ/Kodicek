@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <addon id="plugin.video.kodicek"
        name="Kodíček"
-       version="1.0.0"
+       version="1.2.0"
        provider-name="TvojeJméno">
 
     <requires>
@@ -28,6 +28,8 @@
             <fanart>fanart.jpg</fanart>
         </assets>
         <news>
+            [B]1.2.0[/B] - Vylepšené vyhledávání TMDB s tolerancí roku, flexibilnější párování roku ve Webshare.
+            [B]1.1.0[/B] - Streamuj.tv integration completely removed.
             [B]1.0.0[/B] - První verze Kodíčku: jednoduché vyhledávání a přehrávání z Webshare.
         </news>
     </extension>

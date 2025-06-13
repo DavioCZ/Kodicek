@@ -68,9 +68,9 @@
     - [x] Zaregistrovat se na TMDb a získat API klíč. (User provided)
     - [x] Uložit API klíč bezpečně (např. v Kodi settings).
 - [x] **Implementace vyhledávání filmů a seriálů přes TMDb API:** (Movies implemented, TV shows can be added)
-    - [x] Funkce pro vyhledávání filmů: `https://api.themoviedb.org/3/search/movie?api_key=TVUJ_KLIC&language=cs&query=NÁZEV&year=ROK`
+    - [x] Funkce pro vyhledávání filmů: `https://api.themoviedb.org/3/search/movie?api_key=TVUJ_KLIC&language=cs&query=NÁZEV&year=ROK` (Vylepšeno o toleranci roku `year_fuzz`, dotaz na TMDB nyní používá název bez roku získaný pomocí `strip_year()`)
     - [ ] Funkce pro vyhledávání seriálů: `https://api.themoviedb.org/3/search/tv?api_key=TVUJ_KLIC&language=cs&query=NÁZEV&first_air_date_year=ROK` (Placeholder for future)
-    - [x] Zpracovat uživatelský dotaz (např. "Pán prstenů 2001") a extrahovat název a rok.
+    - [x] Zpracovat uživatelský dotaz (např. "Pán prstenů 2001") a extrahovat název a rok. (Vyhledávání TMDB nyní podporuje `year_fuzz`, dotaz na TMDB nyní používá název bez roku získaný pomocí `strip_year()`)
     - [x] Získat první/více výsledků, umožnit výběr nejrelevantnějšího. (Displayed as a list for user selection)
 - [x] **Načítání detailů titulu z TMDb:**
     - [x] Pro vybrané ID titulu stáhnout detaily (např. přes `/movie/{movie_id}` nebo `/tv/{tv_id}`).
@@ -104,22 +104,54 @@
 
 ---
 
+## 5.1. Vylepšení TMDB a Navigace Seriálů (Červen 2025)
+- [x] **Přepnutí na `/search/multi` pro TMDB:**
+    - [x] `resources/lib/tmdb.py` nyní používá `/search/multi` pro současné hledání filmů a seriálů.
+- [x] **Podpora více jazyků pro TMDB:**
+    - [x] `resources/lib/tmdb.py` vyhledává nejprve v `cs-CZ`, poté jako fallback `en-US`.
+- [x] **Fuzzy alias pro vyhledávací dotaz:**
+    - [x] `resources/lib/tmdb.py` zkouší nahradit `" a "` za `" and "` pokud původní dotaz nic nenajde.
+- [x] **Implementace navigace pro seriály:**
+    - [x] Výsledky vyhledávání zobrazují seriály (`media_type="tv"`) jako složky.
+    - [x] Kliknutí na seriál vede na `action="show_seasons"`, která zobrazí seznam sezón.
+    - [x] Kliknutí na sezónu vede na `action="show_episodes"`, která zobrazí seznam epizod dané sezóny.
+    - [x] Metadata a obrázky pro seriály, sezóny a epizody jsou načítány z TMDB.
+- [x] **Konstrukce Webshare dotazu pro epizody:**
+    - [x] Pro epizodu je Webshare dotaz tvořen jako: `"{Název seriálu} S{číslo série}E{číslo epizody} + {Český/EN název dílu} + {rok seriálu (volitelně)}"`.
+    - [x] Vylepšeno v `action="play_episode"`:
+        - [x] Funkce `build_episode_queries` byla přepsána pro generování širší škály variant dotazů, včetně krátkých formátů (např. S1E1, 1x1) a různých kombinací s/bez názvu epizody a roku. Pořadí generovaných dotazů bylo upraveno pro lepší úspěšnost.
+        - [x] Přidána funkce `filter_episode_results` pro filtrování výsledků z Webshare tak, aby obsahovaly normalizovaný název seriálu a jeden z definovaných vzorů kódu epizody (SxxExx, xxXxx, SxE, xEx).
+        - [x] Akce `play_episode` nyní po každém dotazu na Webshare filtruje výsledky pomocí `filter_episode_results` a použije první sadu neprázdných, relevantních výsledků.
+        - [x] Rozšířeno logování o počet původních a filtrovaných výsledků.
+- [x] **Oprava chyby "Invalid setting type" pro `tmdb_skip_specials`:**
+    - [x] Přidána definice `tmdb_skip_specials` do `resources/settings.xml`.
+    - [x] Ošetřeno volání `addon.getSettingBool("tmdb_skip_specials")` pomocí `try-except` v `kodicek.py`.
+
+---
+
 ## 6. Filtrování a výběr správných zdrojů (Matching s Webshare)
 - [x] **Propojení TMDb titulu s výsledky z Webshare:**
-    - [x] Porovnávat název souboru z Webshare s originálním/českým názvem z TMDb.
+    - [x] Porovnávat název souboru z Webshare s originálním/českým názvem z TMDb (název z TMDb je před porovnáním také očištěn pomocí `strip_year()`).
         - [x] Normalizovat názvy (malá písmena, odstranit diakritiku, speciální znaky, nahradit mezery `_` nebo `.`).
-    - [x] Porovnávat rok vydání (pokud je v názvu/metadata souboru).
+    - [x] Porovnávat rok vydání (pokud je v názvu/metadata souboru). (Nyní s tolerancí ±1 rok)
+    - [x] Vylepšena logika vyhledávání na Webshare v `process_tmdb_selection`:
+        - [x] Primární vyhledávání: název z TMDb (očištěný pomocí `strip_year()`) BEZ roku.
+        - [x] Fallback 1: název z TMDb (očištěný) + rok z TMDb.
+        - [x] Fallback 2: originální název z TMDb (očištěný) BEZ roku.
+        - [x] Fallback 3: originální název z TMDb (očištěný) + rok z TMDb.
+    - [x] Dotazy na Webshare v `action=search` (při fallbacku z TMDb) také používají název očištěný pomocí `strip_year()`.
 - [x] **Implementace algoritmu pro filtrování a skórování souborů z Webshare:**
     - [x] Vytvořit funkci `normalize(text)` pro úpravu názvů.
+    - [x] Vytvořit funkci `strip_year(title)` pro odstranění roku z názvu.
     - [x] Pro každý soubor z Webshare:
-        - [x] Zkontrolovat shodu normalizovaného názvu a roku s TMDb.
+        - [x] Zkontrolovat shodu normalizovaného názvu (očištěného pomocí `strip_year()`) a roku s TMDb.
         - [x] Přidělovat skóre na základě kritérií:
-            - [x] Shoda názvu a roku (základní skóre). (Vylepšeno pro striktnější shodu názvu a roku)
+            - [x] Shoda názvu (očištěného pomocí `strip_year()`) a roku (základní skóre). (Shoda roku nyní s tolerancí ±1)
             - [x] Přítomnost jazykové stopy (CZ, CZE, český, SK, EN, ENG – preferovat CZ).
             - [x] Kvalita (1080p, 720p, BluRay, WEBRip). (Rozšířeno o 4K a penalizaci za CAM/TS)
             - [x] Další relevantní pravidla. (File type check implemented, přidán MIN_SCORE_THRESHOLD)
     - [x] Seřadit výsledky podle skóre (nejlepší nahoře).
-    - [x] Vybrat soubor s nejvyšším skóre; pokud žádný nevyhovuje, vzít první dostupný z Webshare jako fallback. (User selects from sorted list; fallback if no scored files meeting threshold)
+    - [x] Vybrat soubor s nejvyšším skóre; pokud žádný nevyhovuje, vzít první dostupný z Webshare jako fallback. (User selects from sorted list; fallback if no scored files meeting threshold, plus fallback search query)
     - [x] Příklad algoritmu (pseudo): (Implemented and enhanced in `process_tmdb_selection`)
       ```python
       # Po získání výsledků z TMDb a Webshare:
@@ -222,5 +254,13 @@
 - [ ] Požádat testery o zpětnou vazbu
 - [ ] Sledovat a opravovat bugy (issue tracker)
 - [ ] Plánovat nové featury, údržbu a další rozvoj
+
+---
+
+## 14. Integrace dalších služeb
+- [x] **Streamuj.tv Resolver:**
+    - [x] Přidat `StreamujHoster` do `kodicek.py`.
+    - [x] Přidat nastavení pro Streamuj.tv (`st_user`, `st_pass`, `st_loc`) do `resources/settings.xml`.
+    - [x] Opravit regulární výraz pro extrakci zdrojové URL v `streamuj.py`.
 
 ---

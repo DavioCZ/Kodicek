@@ -59,9 +59,80 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Directly below the "Historie vyhledávání" sub-folder, the playback history (recently watched items) is listed, newest first.
   - This change ensures that the keyboard for search only appears when "Vyhledat film/seriál" is explicitly chosen, and provides a consolidated "Historie" section.
 
-## [Unreleased]
+## [1.2.0] - 2025-06-13
+
+### Changed
+- Vylepšeno vyhledávání na TMDB (`search_tmdb`):
+    - Přidána tolerance roku (`year_fuzz`) pro flexibilnější vyhledávání. Funkce nyní zkouší přesný rok, poté roky v rozsahu ±`year_fuzz` a nakonec vyhledávání bez roku.
+- Upraveno párování roku v `process_tmdb_selection` při skórování souborů z Webshare:
+    - Rok v názvu souboru je nyní porovnáván s rokem z TMDB s tolerancí ±1 rok.
+- Vylepšeno vyhledávání na Webshare v `process_tmdb_selection`:
+    - Primární vyhledávání na Webshare nyní používá název z TMDb očištěný od roku (`strip_year(title)`).
+    - Přidány další fallback vyhledávací pokusy, pokud primární selže:
+        1. Název z TMDb (očištěný) + rok z TMDb.
+        2. Originální název z TMDb (očištěný) bez roku.
+        3. Originální název z TMDb (očištěný) + rok z TMDb.
+- Přidána funkce `strip_year(title)` pro odstranění roku z názvu.
+    - Tato funkce je nyní použita pro přípravu dotazů pro TMDB a Webshare, aby se primárně vyhledávalo podle názvu bez roku, zatímco rok samotný je použit pro fuzzy vyhledávání na TMDB a skórování na Webshare.
+    - Normalizovaný název pro párování v `process_tmdb_selection` (`normalized_tmdb_title`) je nyní také založen na názvu bez roku.
+
+## [1.3.0] - 2025-06-13
 
 ### Added
+- **Rozšířená podpora pro seriály:**
+    - Implementována plná navigace pro seriály: Výběr seriálu → Výběr sezóny → Výběr epizody.
+    - Metadata (názvy, popisy, obrázky) pro seriály, sezóny a epizody jsou načítány z TMDB API.
+    - Pro epizody je konstruován specifický dotaz pro Webshare (`{Název seriálu} S{číslo série}E{číslo epizody} + {Český/EN název dílu} + {rok seriálu}`).
+- **Nové helper funkce v `kodicek.py`:**
+    - `tmdb_api_request`: Univerzální funkce pro volání TMDB API.
+    - `_tmdb_get_for_search_module`: Wrapper pro `tmdb_api_request` používaný novou `search_tmdb` funkcí.
+    - `get_banner_image_url`: Získává URL pro banner/backdrop z TMDB položky.
+- **Konstanta `UI_LANG`**: Přidána do `kodicek.py` pro specifikaci jazyka UI prvků a TMDB dat (nastaveno na "cs-CZ").
+
+### Changed
+- **Vyhledávání přes TMDB (`resources/lib/tmdb.py`):**
+    - Přepnuto na endpoint `/search/multi` pro současné vyhledávání filmů a seriálů.
+    - Implementována podpora pro více jazyků: primárně `cs-CZ`, fallback na `en-US`.
+    - Přidán fuzzy alias pro vyhledávací dotaz (nahrazuje `" a "` za `" and "`).
+- **Zpracování výsledků vyhledávání v `kodicek.py` (`action="search"`):**
+    - Nyní využívá `new_search_tmdb` z `resources/lib/tmdb.py`.
+    - Rozlišuje `media_type` ('movie' vs 'tv') z výsledků `/search/multi`.
+    - Filmy vedou na `action=process_tmdb_selection`.
+    - Seriály vedou na novou akci `action=show_seasons`.
+- **Refaktorována funkce `get_tmdb_details` v `kodicek.py`:**
+    - Nyní využívá novou helper funkci `tmdb_api_request`.
+    - Rozšířena o `external_ids` v `append_to_response`.
+- **Použití `urllib.parse.quote(string, encoding='utf-8')`:**
+    - Zajištěno správné kódování URL parametrů obsahujících názvy/titulky.
+
+## [Unreleased]
+
+### Removed
+* Streamuj.tv integration completely removed.
+
+### Added
+- Added Streamuj.tv search functionality:
+  - Updated the `search()` method in `resources/lib/streamuj.py` to use the Streamuj.tv XHR POST endpoint (`/ajax/search`). This involves sending a JSON payload (`{"term": query, "limit": limit, "type": "video"}`) and parsing the JSON response. This replaces the previous GET request to `/api/search` for improved compatibility with the current Streamuj.tv API.
+  - The `_request()` method in `resources/lib/streamuj.py` continues to use a standard User-Agent (`Mozilla/5.0...`) via the `_headers()` method for all requests made by `StreamujHoster`.
+  - The previous scraping-specific regular expression `_SEARCH_ITEM_RE` is still present in `streamuj.py` but is not used by the active `search` method.
+  - In `kodicek.py`:
+    - Added a new route `action="search_streamuj"` in the `router` function.
+    - Added a new menu item "[COLOR gold]Vyhledávání – test Streamuj[/COLOR]" to `display_main_menu()`. This item is non-folder and directly triggers the search.
+    - Implemented the `search_streamuj()` function, which:
+      - Prompts the user for a search term.
+      - Uses the `StreamujHoster.search()` method to find results.
+      - If one result is found, attempts to play it directly.
+      - If multiple results are found, displays them in a list for the user to select and play.
+      - Shows a notification if no results are found or if a stream URL cannot be obtained.
+    - Added a helper function `add_dir()` to `kodicek.py` for creating directory items, used by the new menu entry.
+- Integrated Streamuj.tv resolver:
+  - Added `StreamujHoster` class import and initialization in `kodicek.py`'s `HOSTERS` list.
+  - Added settings for Streamuj.tv username (`st_user`), password (`st_pass`), and preferred CDN location (`st_loc`) to `resources/settings.xml`.
+- Added "Vyhledávání - test" item to the main menu in `kodicek.py`.
+  - This item triggers a new `search_test` action.
+  - The `search_test` action prompts the user for a search term using an input dialog.
+  - It then performs a Webshare search with the entered term and displays the results, prefixed with "[TEST]".
+  - This is for basic testing of the search functionality.
 - Initial TMDb integration for movie searching:
   - Added setting in `resources/settings.xml` for TMDb API key.
   - Implemented `get_tmdb_api_key()` to retrieve the key in `kodicek.py`.
@@ -87,6 +158,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Updated `TASK_LIST.md` with a detailed plan for TMDb integration (API key, search, details, images) and Webshare result filtering (name/year matching, scoring algorithm, file type filtering).
+- **Vylepšeno vyhledávání epizod na Webshare (`play_episode` v `kodicek.py`):**
+  - Funkce `build_episode_queries` byla přepsána tak, aby generovala širší spektrum variant dotazů pro epizody. Nově zahrnuje:
+    - Krátké formáty čísel sezón a epizod (např. `S1E1`, `1x1`) vedle plných formátů (`S01E01`, `01x01`), včetně variant s mezerou (např. `S01 E01`).
+    - Různé kombinace s/bez názvu epizody a s/bez roku vydání seriálu.
+    - Upravené pořadí generovaných dotazů pro optimalizaci šance na nalezení relevantních výsledků.
+  - Přidána nová pomocná funkce `filter_episode_results` pro filtrování výsledků z Webshare. Tato funkce zajišťuje, že vrácené soubory obsahují normalizovaný název seriálu A zároveň jeden z relevantních vzorů kódu epizody (např. `s01e01`, `01x01`, `s1e1`, `1x1`), čímž se zvyšuje relevance nalezených zdrojů.
+  - Funkce `play_episode` nyní po každém dotazu na Webshare volá `filter_episode_results`. Pokračuje v iteraci dalšími variantami dotazů pouze pokud aktuální dotaz po filtraci nevrátí žádné relevantní výsledky.
+  - Rozšířeno logování v `play_episode` tak, aby zobrazovalo počet původních výsledků z Webshare a počet výsledků po aplikaci `filter_episode_results`.
+  - Zvýšen limit pro `search_webshare` na 100 výsledků, aby bylo více dat pro filtrování.
 - Enhanced the scoring logic in `process_tmdb_selection` for stricter and more accurate filtering of Webshare results:
   - Implemented a `MIN_SCORE_THRESHOLD` (set to 3.0). Files scoring below this are discarded.
   - Title matching is stricter: `normalized_tmdb_title` must be a substring of `fname_normalized`. If not, the file is heavily penalized (score = -100). A successful match grants a +3.0 bonus.
@@ -96,3 +176,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - File type check now includes `.mpg`, `.mpeg`, `.iso` as valid video extensions. Non-video files get a score of -200.
   - Logging for scored/rejected files now includes the score formatted to two decimal places.
   - Notification message updated if no files meet the threshold after filtering.
+
+### Fixed
+- Corrected the regular expression `_SOURCE_RE` in `resources/lib/streamuj.py` to properly capture source URLs from Streamuj.tv, resolving a `SyntaxError` related to mismatched parentheses.
+- **Opravena chyba "Invalid setting type" pro `tmdb_skip_specials`:**
+  - Přidána definice `tmdb_skip_specials` (typ `bool`, default `true`) do `resources/settings.xml`.
+  - Volání `addon.getSettingBool("tmdb_skip_specials")` v `kodicek.py` (funkce `show_seasons`) bylo ošetřeno pomocí `try-except TypeError`, aby se předešlo chybě, pokud nastavení chybí nebo má nesprávný typ. V takovém případě se použije výchozí hodnota `True`.
